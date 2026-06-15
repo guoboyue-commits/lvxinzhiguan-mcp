@@ -1,0 +1,17 @@
+[Unit]
+Description=CaseRun MCP Server
+After=network.target
+
+[Service]
+Type=simple
+User=lvxin
+WorkingDirectory=/opt/lvxinzhiguan/backend
+Environment=APP_CONFIG_PATH=/opt/lvxinzhiguan/config.yaml
+Environment=CASERUN_MCP_URL=https://your-domain.example/mcp
+Environment=FRONTEND_URL=https://your-domain.example
+ExecStart=/opt/lvxinzhiguan/backend/caserun-mcp -transport http -addr :8091
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

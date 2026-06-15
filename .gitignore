@@ -1,0 +1,14 @@
+.env
+.env.*
+config.yaml
+*.log
+*.exe
+*.dll
+*.so
+*.dylib
+node_modules/
+dist/
+build/
+tmp/
+coverage/
+.DS_Store
