@@ -15,7 +15,7 @@ Lvxinzhiguan backend/frontend implementation.
 
 ## Docs And Operations
 
-- `README.md`: public positioning, keywords, capability overview, and quick start.
+- `README.md`: public positioning, lawyer value, SEO keywords, website Key creation guide, capability overview, and quick start.
 - `SECURITY.md`: MCP Key boundary and recommended permission posture.
 - `DEPLOYMENT.md`: deployment outline for the MCP service and reverse proxy.
 - `deploy/`: systemd and Nginx examples.

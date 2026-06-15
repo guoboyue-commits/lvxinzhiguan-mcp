@@ -2,7 +2,8 @@
 
 ## 前置条件
 
-- 主项目已经包含 `overlay/` 中的 MCP 增量代码。
+- 律信智管主项目已经升级到支持 CaseRun MCP Key 权限平台的版本。
+- 本仓库只提供公开接入资料、SQL、部署样例和验收脚本，不包含主项目后端/前端私有实现源码。
 - 主项目配置文件可以正常连接业务数据库。
 - 已执行 `overlay/sql/caserun_mcp_v1_migration.sql`。
 - 外网访问必须走 HTTPS。
@@ -41,27 +42,27 @@ Linux systemd 可参考 `deploy/caserun-mcp.service`。
 推荐外部只暴露：
 
 ```text
-https://your-domain.example/mcp
+https://lvxinzhiguan.com/mcp
 ```
 
-Nginx 样例见 `deploy/nginx.caserun-mcp.conf`。
+Nginx 样例见 `deploy/nginx.caserun-mcp.conf`。私有部署时把样例里的域名替换成自己的 HTTPS 域名。
 
 主项目前端展示给律师的 MCP 地址由后端计算。生产环境建议显式配置：
 
 ```text
-CASERUN_MCP_URL=https://your-domain.example/mcp
-FRONTEND_URL=https://your-domain.example
+CASERUN_MCP_URL=https://lvxinzhiguan.com/mcp
+FRONTEND_URL=https://lvxinzhiguan.com
 ```
 
 ## 本地验收
 
-从本仓库运行脚本，并指向主项目：
+从本仓库运行脚本，并指向已部署的 MCP 地址：
 
 ```powershell
-.\scripts\caserun-mcp-smoke.ps1 -ProjectRoot D:\code\IMPORTANT\lvxin\lvxinzhiguan
+.\scripts\caserun-mcp-smoke.ps1 -MCPUrl https://lvxinzhiguan.com/mcp -Token lxzg_mcp_REPLACE_ME
 ```
 
-带 HTTP health probe：
+如果在同一台机器上同时有主项目源码，也可以用脚本检查主项目约定结构：
 
 ```powershell
 .\scripts\caserun-mcp-smoke.ps1 -ProjectRoot D:\code\IMPORTANT\lvxin\lvxinzhiguan -Http

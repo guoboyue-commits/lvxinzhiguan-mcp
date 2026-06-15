@@ -2,5 +2,5 @@
 # Use the MCP HTTP / streamable HTTP option in your client.
 
 [mcp_servers.caserun]
-url = "https://your-domain.example/mcp"
+url = "https://lvxinzhiguan.com/mcp"
 headers = { Authorization = "Bearer lxzg_mcp_REPLACE_ME" }
