@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+*.log
+reports/
+tmp/
+node_modules/
+dist/
+pack/
+config.yaml
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.sql
+!sql/caserun_mcp_permission_group_migration.sql
