@@ -1,166 +1,173 @@
-param(
-    [string]$ProjectRoot = "",
-    [string]$MCPUrl = "",
-    [string]$Token = "",
-    [switch]$Http,
-    [int]$Port = 8092
-)
-
+# CaseRun MCP public smoke test.
+# Requires a temporary personal MCP token with access to CASERUN_PILOT_CASE_ID.
 $ErrorActionPreference = "Stop"
 
-function Get-HeaderValue {
+function Get-EnvText {
     param(
-        [Parameter(Mandatory = $true)]$Headers,
-        [Parameter(Mandatory = $true)][string]$Name
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$Default = ""
     )
-
-    $value = $Headers[$Name]
-    if ($value -is [array]) {
-        return $value[0]
-    }
-    return $value
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if ($null -eq $value) { return $Default }
+    $trimmed = $value.Trim()
+    if ($trimmed -eq "" -and $Default -ne "") { return $Default }
+    return $trimmed
 }
 
-function Invoke-MCPJsonRpc {
+function New-RpcJson {
     param(
-        [Parameter(Mandatory = $true)][string]$Url,
-        [Parameter(Mandatory = $true)][hashtable]$Body,
-        [string]$BearerToken = "",
-        [string]$SessionId = ""
+        [Parameter(Mandatory = $true)][string]$Method,
+        $Params = $null,
+        $ID = $null
     )
-
-    $headers = @{
-        "Accept"       = "application/json, text/event-stream"
-        "Content-Type" = "application/json"
-    }
-    if (![string]::IsNullOrWhiteSpace($BearerToken)) {
-        $headers["Authorization"] = "Bearer $BearerToken"
-    }
-    if (![string]::IsNullOrWhiteSpace($SessionId)) {
-        $headers["Mcp-Session-Id"] = $SessionId
-    }
-
-    $json = $Body | ConvertTo-Json -Depth 20 -Compress
-    return Invoke-WebRequest -Uri $Url -Method Post -Headers $headers -Body $json -UseBasicParsing -TimeoutSec 20
+    $body = [ordered]@{ jsonrpc = "2.0" }
+    if ($null -ne $ID) { $body.id = $ID }
+    $body.method = $Method
+    if ($null -ne $Params) { $body.params = $Params }
+    return $body | ConvertTo-Json -Depth 30 -Compress
 }
 
-function Test-RemoteMCP {
-    param(
-        [Parameter(Mandatory = $true)][string]$Url,
-        [Parameter(Mandatory = $true)][string]$BearerToken
-    )
-
-    if ([string]::IsNullOrWhiteSpace($BearerToken)) {
-        throw "Please pass -Token with a personal MCP token."
-    }
-
-    $initBody = @{
-        jsonrpc = "2.0"
-        id = 1
-        method = "initialize"
-        params = @{
-            protocolVersion = "2025-06-18"
-            capabilities = @{}
-            clientInfo = @{
-                name = "caserun-mcp-smoke"
-                version = "1.0.0"
+function Convert-McpResponse {
+    param([string]$Content, [string]$ContentType)
+    $payload = ($Content + "").Trim()
+    if ($payload -eq "") { return $null }
+    if (($ContentType + "") -match "text/event-stream") {
+        $items = @()
+        foreach ($line in ($payload -split "`r?`n")) {
+            if ($line.StartsWith("data:")) {
+                $items += $line.Substring(5).TrimStart()
             }
         }
+        $payload = ($items -join "`n").Trim()
     }
-
-    $init = Invoke-MCPJsonRpc -Url $Url -BearerToken $BearerToken -Body $initBody
-    if ($init.StatusCode -lt 200 -or $init.StatusCode -ge 300) {
-        throw "MCP initialize returned HTTP $($init.StatusCode)"
-    }
-    Write-Host "MCP initialize OK" -ForegroundColor Green
-
-    $sessionId = Get-HeaderValue -Headers $init.Headers -Name "Mcp-Session-Id"
-
-    $initializedBody = @{
-        jsonrpc = "2.0"
-        method = "notifications/initialized"
-        params = @{}
-    }
-    try {
-        Invoke-MCPJsonRpc -Url $Url -BearerToken $BearerToken -SessionId $sessionId -Body $initializedBody | Out-Null
-    } catch {
-        Write-Host "MCP initialized notification skipped: $($_.Exception.Message)" -ForegroundColor DarkYellow
-    }
-
-    $toolsBody = @{
-        jsonrpc = "2.0"
-        id = 2
-        method = "tools/list"
-        params = @{}
-    }
-    $tools = Invoke-MCPJsonRpc -Url $Url -BearerToken $BearerToken -SessionId $sessionId -Body $toolsBody
-    if ($tools.StatusCode -lt 200 -or $tools.StatusCode -ge 300) {
-        throw "MCP tools/list returned HTTP $($tools.StatusCode)"
-    }
-    if ($tools.Content -notmatch "tools") {
-        Write-Host "MCP tools/list OK, but response did not include a plain tools field. Client may return SSE." -ForegroundColor DarkYellow
-        return
-    }
-    Write-Host "MCP tools/list OK" -ForegroundColor Green
+    if ($payload -eq "") { return $null }
+    return $payload | ConvertFrom-Json
 }
 
-if (![string]::IsNullOrWhiteSpace($MCPUrl)) {
-    Test-RemoteMCP -Url $MCPUrl -BearerToken $Token
-    exit 0
+function Invoke-Mcp {
+    param(
+        [Parameter(Mandatory = $true)][string]$Method,
+        $Params = $null,
+        [switch]$NoAuth
+    )
+    $script:NextID += 1
+    $headers = @{
+        Accept = "application/json, text/event-stream"
+    }
+    if (-not $NoAuth) {
+        $headers.Authorization = "Bearer $script:Token"
+    }
+    if ($script:SessionID -ne "") {
+        $headers["Mcp-Session-Id"] = $script:SessionID
+        $headers["MCP-Protocol-Version"] = $script:ProtocolVersion
+    }
+    $response = Invoke-WebRequest -Uri $script:MCPUrl -Method Post -Headers $headers -Body (New-RpcJson -Method $Method -Params $Params -ID $script:NextID) -ContentType "application/json" -UseBasicParsing -TimeoutSec 30
+    $session = $response.Headers["Mcp-Session-Id"]
+    if ($script:SessionID -eq "" -and $null -ne $session) {
+        $script:SessionID = [string]$session
+    }
+    $parsed = Convert-McpResponse -Content $response.Content -ContentType ([string]$response.Headers["Content-Type"])
+    if ($null -ne $parsed -and $null -ne $parsed.error) {
+        throw "MCP $Method error: $($parsed.error.code) $($parsed.error.message)"
+    }
+    return $parsed
 }
 
-if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
-    $candidate = Join-Path (Split-Path -Parent $PSScriptRoot) "..\lvxinzhiguan"
-    if (Test-Path -LiteralPath $candidate) {
-        $ProjectRoot = (Resolve-Path $candidate).Path
+function Invoke-Tool {
+    param([string]$Name, [hashtable]$Arguments = @{})
+    return Invoke-Mcp -Method "tools/call" -Params @{
+        name = $Name
+        arguments = $Arguments
+    }
+}
+
+function Get-ToolJson {
+    param($Result)
+    if ($null -eq $Result -or $null -eq $Result.result) { return $null }
+    foreach ($item in @($Result.result.content)) {
+        $text = [string]$item.text
+        if ($text.Trim().StartsWith("{") -or $text.Trim().StartsWith("[")) {
+            return $text | ConvertFrom-Json
+        }
+    }
+    return $null
+}
+
+$script:MCPUrl = Get-EnvText "CASERUN_MCP_URL" "https://lvxinzhiguan.com/mcp"
+$script:Token = Get-EnvText "CASERUN_MCP_TOKEN"
+$caseIDText = Get-EnvText "CASERUN_PILOT_CASE_ID"
+$script:ProtocolVersion = "2025-06-18"
+$script:SessionID = ""
+$script:NextID = 0
+
+if ($script:Token -eq "") {
+    throw "Set CASERUN_MCP_TOKEN to a temporary personal MCP token."
+}
+if ($caseIDText -eq "") {
+    throw "Set CASERUN_PILOT_CASE_ID to an authorized case id."
+}
+$caseID = [int64]$caseIDText
+
+$checks = New-Object System.Collections.Generic.List[object]
+
+try {
+    Invoke-Mcp -Method "initialize" -Params @{
+        protocolVersion = $script:ProtocolVersion
+        capabilities = @{}
+        clientInfo = @{ name = "caserun-public-smoke"; version = "1.0.0" }
+    } -NoAuth | Out-Null
+    $checks.Add([pscustomobject]@{ name = "token_required"; status = "fail"; evidence = "/mcp accepted missing Authorization" })
+} catch {
+    $status = 0
+    try { $status = [int]$_.Exception.Response.StatusCode } catch {}
+    if ($status -eq 401) {
+        $checks.Add([pscustomobject]@{ name = "token_required"; status = "pass"; evidence = "/mcp rejected missing Authorization with HTTP 401" })
     } else {
-        throw "Please pass -ProjectRoot pointing to the main lvxinzhiguan repository."
+        $checks.Add([pscustomobject]@{ name = "token_required"; status = "fail"; evidence = "Expected HTTP 401, got HTTP $status" })
     }
 }
 
-$ProjectRoot = (Resolve-Path $ProjectRoot).Path
-$BackendRoot = Join-Path $ProjectRoot "backend"
-$ConfigPath = Join-Path $ProjectRoot "config.yaml"
+Invoke-Mcp -Method "initialize" -Params @{
+    protocolVersion = $script:ProtocolVersion
+    capabilities = @{}
+    clientInfo = @{ name = "caserun-public-smoke"; version = "1.0.0" }
+} | Out-Null
+$checks.Add([pscustomobject]@{ name = "initialize"; status = "pass"; evidence = "MCP initialize succeeded" })
 
-if (!(Test-Path -LiteralPath $BackendRoot)) {
-    throw "Backend directory not found: $BackendRoot"
+$tools = Invoke-Mcp -Method "tools/list"
+$toolNames = @($tools.result.tools | ForEach-Object { $_.name })
+$required = @("case.detail", "case.fee.list", "case.progress.query", "case.evidence.search", "case.delete")
+$missing = @($required | Where-Object { $toolNames -notcontains $_ })
+if ($missing.Count -eq 0) {
+    $checks.Add([pscustomobject]@{ name = "tools_list"; status = "pass"; evidence = "Required tools exposed" })
+} else {
+    $checks.Add([pscustomobject]@{ name = "tools_list"; status = "fail"; evidence = "Missing tools: $($missing -join ', ')" })
 }
 
-Push-Location $BackendRoot
-try {
-    $OutPath = Join-Path ([System.IO.Path]::GetTempPath()) "caserun-mcp-smoke-$PID.exe"
-    go build -o $OutPath ./cmd/caserun-mcp
-    if ($LASTEXITCODE -ne 0) { throw "caserun-mcp build failed" }
-    Write-Host "caserun-mcp build OK" -ForegroundColor Green
-} finally {
-    if ($OutPath -and (Test-Path -LiteralPath $OutPath)) {
-        Remove-Item -LiteralPath $OutPath -Force -ErrorAction SilentlyContinue
-    }
-    Pop-Location
+Invoke-Tool -Name "case.detail" -Arguments @{ case_id = $caseID } | Out-Null
+Invoke-Tool -Name "case.fee.list" -Arguments @{ case_id = $caseID } | Out-Null
+Invoke-Tool -Name "case.progress.query" -Arguments @{ case_id = $caseID } | Out-Null
+$checks.Add([pscustomobject]@{ name = "case_reads"; status = "pass"; evidence = "case.detail, case.fee.list, case.progress.query returned for case_id=$caseID" })
+
+$delete = Get-ToolJson (Invoke-Tool -Name "case.delete" -Arguments @{ case_id = $caseID; session_id = "public-smoke" })
+if ($null -ne $delete -and $delete.status -eq "blocked_high_risk") {
+    $checks.Add([pscustomobject]@{ name = "risk_block"; status = "pass"; evidence = "case.delete returned blocked_high_risk" })
+} else {
+    $checks.Add([pscustomobject]@{ name = "risk_block"; status = "fail"; evidence = "case.delete was not blocked_high_risk" })
 }
 
-if (!$Http) {
-    Write-Host "TIP: add -Http to start server and probe /health" -ForegroundColor DarkYellow
-    exit 0
+$overall = "pass"
+if (@($checks | Where-Object { $_.status -eq "fail" }).Count -gt 0) {
+    $overall = "fail"
 }
 
-if (!(Test-Path -LiteralPath $ConfigPath)) {
-    throw "Config file not found: $ConfigPath"
+$report = [ordered]@{
+    overall = $overall
+    generated_at = (Get-Date).ToUniversalTime().ToString("o")
+    mcp_url = $script:MCPUrl
+    case_id = $caseID
+    checks = $checks
 }
 
-$job = Start-Job -ScriptBlock {
-    param($backendRoot, $configPath, $port)
-    Set-Location $backendRoot
-    $env:APP_CONFIG_PATH = $configPath
-    & go run ./cmd/caserun-mcp -transport http -addr ":$port"
-} -ArgumentList $BackendRoot, $ConfigPath, $Port
-
-Start-Sleep -Seconds 8
-try {
-    $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/health" -UseBasicParsing -TimeoutSec 5
-    if ($r.StatusCode -ne 200) { throw "health not 200" }
-    Write-Host "MCP HTTP /health OK" -ForegroundColor Green
-} finally {
-    Stop-Job $job -ErrorAction SilentlyContinue
-    Remove-Job $job -Force -ErrorAction SilentlyContinue
-}
+$report | ConvertTo-Json -Depth 20
+if ($overall -ne "pass") { exit 1 }
