@@ -15,3 +15,4 @@ config.yaml
 *.crt
 *.sql
 !sql/caserun_mcp_permission_group_migration.sql
+!sql/caserun_uploaded_skill_migration.sql
