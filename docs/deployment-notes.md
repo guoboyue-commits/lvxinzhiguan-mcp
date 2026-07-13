@@ -25,13 +25,13 @@ Expected results:
 
 ## Database Migration
 
-Production requires the token permission-group migration in:
+Production requires the current CaseRun MCP schema baseline:
 
 ```text
-sql/caserun_mcp_permission_group_migration.sql
+sql/caserun_mcp_current_baseline.sql
 ```
 
-The migration is idempotent. It adds `caserun_mcp_token.permission_group`, defaults existing tokens to `draft_confirm`, and creates an index for permission filtering.
+The baseline is idempotent. It creates the MCP token, audit, permission-group, and uploaded-skill schema required by the public MCP integration.
 
 ## Nginx Shape
 
